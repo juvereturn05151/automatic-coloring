@@ -1,64 +1,46 @@
+from shape_matcher import ShapeMatcher
+from contour_extractor import ContourExtractor
+import matplotlib.pyplot as plt
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
 
-# ============================================================
-# Helper: Extract contours and average colors
-# ============================================================
-def extract_contours(image_path):
-    img = cv2.imread(image_path)
-    img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+def main():
+    reference = "red_shirt.png"
+    target = "dead_red_shirt.png"
 
-    _, binary = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((5,5), np.uint8))
+    matcher = ShapeMatcher(ContourExtractor())
+    ref_img, tgt_img, colorized_match = matcher.match_and_colorize(reference, target)
 
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = [c for c in contours if cv2.contourArea(c) > 50]
+    # ============================================================
+    # Edge Detection Visualization (same as your original method)
+    # ============================================================
 
-    objects = []
-    for c in contours:
-        mask = np.zeros(gray.shape, dtype=np.uint8)
-        cv2.drawContours(mask, [c], -1, 255, thickness=cv2.FILLED)
-        mean_color = cv2.mean(img_rgb, mask)
-        mean_color = tuple(int(v) for v in mean_color[:3])
-        objects.append({"contour": c, "color": mean_color})
-    return img_rgb, gray, contours, objects
+    # Convert to grayscale
+    gray = cv2.cvtColor(ref_img, cv2.COLOR_RGB2GRAY)
 
-
-# ============================================================
-# Main: Show edge detection, boxes, filled output, shape match
-# ============================================================
-def show_edge_detection(reference_path, target_path):
-    # -------------------------------
-    # 1) Read and preprocess
-    # -------------------------------
-    img = cv2.imread(reference_path)
-    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-
+    # Apply Laplacian to detect edges
     edge = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
     edge = cv2.convertScaleAbs(edge)
+
+    # Apply Gaussian blur to smooth noise
     edge = cv2.GaussianBlur(edge, (3, 3), 0)
+
+    # Normalize for display
     edge_normalized = edge.astype(np.float32) / 255.0
 
-    # -------------------------------
-    # 2) Threshold & Contour Detection
-    # -------------------------------
-    _, binary = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY_INV)
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, np.ones((5,5), np.uint8))
+    # Binary mask to detect number of edge-connected components
+    _, binary = cv2.threshold(edge, 30, 255, cv2.THRESH_BINARY)
+    num_labels, labels = cv2.connectedComponents(binary)
+    num_objects = num_labels - 1
 
-    contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = [c for c in contours if cv2.contourArea(c) > 50]
-    num_objects = len(contours)
-    print(f"Detected objects (base): {num_objects}")
+    print(f"Laplacian edge objects detected: {num_objects}")
 
-    # -------------------------------
-    # 3) Visualization: Original + Edge
-    # -------------------------------
+    # ============================================================
+    # Visualization
+    # ============================================================
     plt.figure(figsize=(15, 5))
     plt.subplot(1, 3, 1)
-    plt.imshow(img)
+    plt.imshow(ref_img)
     plt.title("Original RGB Image")
     plt.axis("off")
 
@@ -69,15 +51,19 @@ def show_edge_detection(reference_path, target_path):
 
     plt.subplot(1, 3, 3)
     plt.imshow(edge_normalized, cmap="gray")
-    plt.title(f"Laplacian Edge Map\nObjects: {num_objects}")
+    plt.title(f"Laplacian Edge Map (Smoothed)\nDetected: {num_objects}")
     plt.axis("off")
+
     plt.tight_layout()
     plt.show()
 
-    # -------------------------------
-    # 4) Bounding Boxes
-    # -------------------------------
-    img_boxes = img.copy()
+    # ============================================================
+    # Bounding Boxes on Reference
+    # ============================================================
+    extractor = ContourExtractor()
+    _, _, contours, _ = extractor.extract(reference)
+
+    img_boxes = ref_img.copy()
     for i, cnt in enumerate(contours, start=1):
         x, y, w, h = cv2.boundingRect(cnt)
         cv2.rectangle(img_boxes, (x, y), (x + w, y + h), (0, 255, 0), 3)
@@ -89,38 +75,11 @@ def show_edge_detection(reference_path, target_path):
     plt.axis("off")
     plt.show()
 
-    # -------------------------------
-    # 5) Shape-based color transfer (position independent)
-    # -------------------------------
-    ref_img, ref_gray, _, ref_objs = extract_contours(reference_path)
-    tgt_img, tgt_gray, tgt_contours, tgt_objs = extract_contours(target_path)
-
-    colorized_match = tgt_img.copy()
-    print(f"Reference objects: {len(ref_objs)} | Target objects: {len(tgt_objs)}")
-
-    for t_idx, tgt in enumerate(tgt_objs):
-        best_score = float('inf')
-        best_color = (128, 128, 128)
-        for ref in ref_objs:
-            score = cv2.matchShapes(tgt["contour"], ref["contour"], cv2.CONTOURS_MATCH_I1, 0.0)
-            if score < best_score:
-                best_score = score
-                best_color = ref["color"]
-        print(f"Target {t_idx+1}: matched color {best_color}, score={best_score:.5f}")
-        cv2.drawContours(colorized_match, [tgt["contour"]], -1, best_color, thickness=cv2.FILLED)
-
-    plt.figure(figsize=(15,5))
-    plt.subplot(1,3,1); plt.imshow(ref_img); plt.title("Reference (Colored)"); plt.axis("off")
-    plt.subplot(1,3,2); plt.imshow(tgt_img); plt.title("Target (Moved Shapes)"); plt.axis("off")
-    plt.subplot(1,3,3); plt.imshow(colorized_match); plt.title("Auto-Colored (Shape Matched)"); plt.axis("off")
-    plt.tight_layout()
-    plt.show()
-
-    return colorized_match
+    # ============================================================
+    # Final Auto-Colorization Results
+    # ============================================================
+    matcher.visualize_results(ref_img, tgt_img, colorized_match)
 
 
-# ============================================================
-# Run everything
-# ============================================================
 if __name__ == "__main__":
-    show_edge_detection("red_shirt.png", "dead_red_shirt.png")
+    main()
