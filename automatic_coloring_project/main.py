@@ -5,8 +5,11 @@ import cv2
 import numpy as np
 
 def main():
-    reference = "red_shirt.png"
-    target = "dead_red_shirt.png"
+
+    asset_folder = "assets/"
+
+    reference = asset_folder + "green_leg.png"
+    target = asset_folder + "distorted_leg.png"
 
     matcher = ShapeMatcher(ContourExtractor())
     ref_img, tgt_img, colorized_match = matcher.match_and_colorize(reference, target)
