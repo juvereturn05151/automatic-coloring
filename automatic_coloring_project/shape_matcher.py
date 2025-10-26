@@ -1,16 +1,22 @@
+"""
+File Name:    shape_matcher.py
+Author(s):    Ju-ve Chankasemporn
+Copyright:    (c) 2025 DigiPen Institute of Technology. All rights reserved.
+"""
+
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
+
 from contour_extractor import ContourExtractor
 
 class ShapeMatcher:
     def __init__(self, contour_extractor=None):
-        self.extractor = contour_extractor or ContourExtractor()
+        self._extractor = contour_extractor or ContourExtractor()
 
     def match_and_colorize(self, reference_path, target_path):
-        # Extract shapes and colors
-        ref_img, _, _, ref_objs = self.extractor.extract(reference_path)
-        tgt_img, _, tgt_contours, tgt_objs = self.extractor.extract(target_path)
+        """Extract shapes and colors"""
+        ref_img, _, _, ref_objs = self._extractor.extract(reference_path)
+        tgt_img, _, tgt_contours, tgt_objs = self._extractor.extract(target_path)
 
         colorized_match = tgt_img.copy()
         print(f"Reference objects: {len(ref_objs)} | Target objects: {len(tgt_objs)}")
@@ -54,23 +60,4 @@ class ShapeMatcher:
 
         return ref_img, tgt_img, colorized_match
 
-    # Optional visualization
-    def visualize_results(self, ref_img, tgt_img, colorized_match):
-        plt.figure(figsize=(15, 5))
-        plt.subplot(1, 3, 1)
-        plt.imshow(ref_img)
-        plt.title("Reference (Colored)")
-        plt.axis("off")
 
-        plt.subplot(1, 3, 2)
-        plt.imshow(tgt_img)
-        plt.title("Target (Uncolored / Moved Shapes)")
-        plt.axis("off")
-
-        plt.subplot(1, 3, 3)
-        plt.imshow(colorized_match)
-        plt.title("Auto-Colored (Shape Matched)")
-        plt.axis("off")
-
-        plt.tight_layout()
-        plt.show()

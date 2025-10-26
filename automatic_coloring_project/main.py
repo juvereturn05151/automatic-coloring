@@ -1,15 +1,24 @@
+"""
+File Name:    main.py
+Author(s):    Ju-ve Chankasemporn
+Copyright:    (c) 2025 DigiPen Institute of Technology. All rights reserved.
+"""
+
+import cv2
+
 from shape_matcher import ShapeMatcher
 from contour_extractor import ContourExtractor
 from edge_detector import EdgeDetector
-import matplotlib.pyplot as plt
-import cv2
+from visualizer import visualize_bounding_boxes, visualize_results, visualize_edges
+
+ASSET_FOLDER = "assets/"
+COLORED_IMAGE_FOLDER = ASSET_FOLDER + "colored_images/"
+UNCOLORED_IMAGE_FOLDER = ASSET_FOLDER + "uncolored_images/"
 
 def main():
-    asset_folder = "assets/"
-    reference = asset_folder + "red_shirt_eye_color.png"
-    #reference = asset_folder + "red_shirt.png"
-    target = asset_folder + "red_shirt_closed_uncolored.png"
-    #target = asset_folder + "dead_red_shirt.png"
+    # Change the File(s)' Name Here to Test With Other Images
+    reference = COLORED_IMAGE_FOLDER + "red_shirt_eye_color.png"
+    target = UNCOLORED_IMAGE_FOLDER + "red_shirt_closed_uncolored.png"
 
     # ============================================================
     # 1. Shape Matching and Auto-Colorization
@@ -23,7 +32,7 @@ def main():
     edge_detector = EdgeDetector()
     gray, edge_normalized, num_objects = edge_detector.detect_edges(ref_img)
     print(f"Laplacian edge objects detected: {num_objects}")
-    edge_detector.visualize_edges(ref_img, gray, edge_normalized, num_objects)
+    visualize_edges(ref_img, gray, edge_normalized, num_objects)
 
     # ============================================================
     # 3. Bounding Boxes Visualization
@@ -38,16 +47,16 @@ def main():
 
     # Reference
     ref_img, _, ref_contours, _ = extractor.extract(reference)
-    extractor.visualize_bounding_boxes(ref_img, ref_contours, "Reference - Detected Objects")
+    visualize_bounding_boxes(ref_img, ref_contours, "Reference - Detected Objects")
 
     # Target
     tgt_img, _, tgt_contours, _ = extractor.extract(target)
-    extractor.visualize_bounding_boxes(tgt_img, tgt_contours, "Target - Detected Objects")
+    visualize_bounding_boxes(tgt_img, tgt_contours, "Target - Detected Objects")
 
     # ============================================================
     # 4. Final Auto-Colorization Results
     # ============================================================
-    matcher.visualize_results(ref_img, tgt_img, colorized_match)
+    visualize_results(ref_img, tgt_img, colorized_match)
 
 if __name__ == "__main__":
     main()
