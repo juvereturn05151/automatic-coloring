@@ -24,8 +24,33 @@ class ShapeMatcher:
                 if score < best_score:
                     best_score = score
                     best_color = ref["color"]
-            print(f"Target {t_idx+1}: matched color {best_color}, score={best_score:.5f}")
-            cv2.drawContours(colorized_match, [tgt["contour"]], -1, best_color, thickness=cv2.FILLED)
+
+            print(f"Target {t_idx + 1}: matched color {best_color}, score={best_score:.5f}")
+
+            # --- Step 1. Create base mask for contour outline ---
+            mask = np.zeros(tgt_img.shape[:2], dtype=np.uint8)
+            cv2.drawContours(mask, [tgt["contour"]], -1, 255, thickness=2)
+
+            # --- Step 2. Flood-fill interior (this fills actual shape) ---
+            flood_mask = mask.copy()
+            h, w = flood_mask.shape
+            flood_mask_pad = np.zeros((h + 2, w + 2), np.uint8)  # required by floodFill
+            flood_filled = flood_mask.copy()
+
+            # Flood from a point inside the shape (OpenCV finds interior)
+            # We can sample a seed point from the contour’s bounding box
+            x, y, w_box, h_box = cv2.boundingRect(tgt["contour"])
+            seed_point = (x + w_box // 2, y + h_box // 2)
+            cv2.floodFill(flood_filled, flood_mask_pad, seed_point, 255)
+
+            # --- Step 3. Merge outline + filled area ---
+            full_region = cv2.bitwise_or(flood_filled, mask)
+
+            # --- Step 4. Optional dilation for closed shapes ---
+            full_region = cv2.morphologyEx(full_region, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+
+            # --- Step 5. Paint region color ---
+            colorized_match[full_region == 255] = best_color
 
         return ref_img, tgt_img, colorized_match
 
