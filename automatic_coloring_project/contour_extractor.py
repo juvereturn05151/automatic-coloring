@@ -36,11 +36,59 @@ class ContourExtractor:
         outline_mode = self.is_outline_drawing(gray)
 
         if outline_mode:
-            threshold_value = 250
-            _, binary = cv2.threshold(gray, threshold_value, 255, cv2.THRESH_BINARY_INV)
-            binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, self.kernel)
             mode = "outline (black lines)"
-            mask_list = [binary]
+
+            # --- Step 1. Adaptive threshold to handle anti-aliased outlines ---
+            binary = cv2.adaptiveThreshold(
+                gray, 255,
+                cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                cv2.THRESH_BINARY_INV,
+                11, 5
+            )
+
+            # --- Step 2. Thicken lines slightly to close gaps ---
+            binary = cv2.dilate(binary, np.ones((3, 3), np.uint8), iterations=1)
+
+            # --- Step 3. Remove tiny specks ---
+            binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8), iterations=1)
+
+            # --- Step 4. Find ALL contours (small + large) ---
+            contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+            if not contours:
+                print("[Warning] No contours found. Check thresholding.")
+                return img_rgb, gray, [], []
+
+            # --- Step 5. Sort contours smallest → largest ---
+            contours = sorted(contours, key=cv2.contourArea)
+
+            # --- Step 6. Hierarchical filling: small first, avoid overlap ---
+            accepted_masks = np.zeros_like(gray, dtype=np.uint8)
+            mask_list = []
+
+            for c in contours:
+                area = cv2.contourArea(c)
+                if area < self.min_area:
+                    continue
+
+                temp_mask = np.zeros_like(gray, dtype=np.uint8)
+                cv2.drawContours(temp_mask, [c], -1, 255, thickness=cv2.FILLED)
+
+                overlap = cv2.bitwise_and(temp_mask, accepted_masks)
+                overlap_ratio = np.sum(overlap > 0) / np.sum(temp_mask > 0)
+
+                # accept only if not overlapping with previous accepted ones
+                if overlap_ratio < 0.2:
+                    mask_list.append(temp_mask)
+                    accepted_masks = cv2.bitwise_or(accepted_masks, temp_mask)
+
+            # Debug visualization (optional)
+            if len(mask_list) == 0:
+                print("[Info] No masks created after filtering.")
+                plt.imshow(binary, cmap='gray')
+                plt.title("Debug: Binary Mask")
+                plt.show()
+
         else:
             mode = "colored (multi-region)"
             segmented, label_map = self.color_segmentation(img_rgb)

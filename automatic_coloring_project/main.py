@@ -6,8 +6,8 @@ import cv2
 
 def main():
     asset_folder = "assets/"
-    reference = asset_folder + "red_shirt_closed.png"
-    #reference = asset_folder + "red_shirt.png"
+    #reference = asset_folder + "red_shirt_closed.png"
+    reference = asset_folder + "red_shirt.png"
     #target = asset_folder + "red_shirt_closed_uncolored.png"
     target = asset_folder + "dead_red_shirt.png"
 
