@@ -6,8 +6,10 @@ import cv2
 
 def main():
     asset_folder = "assets/"
-    reference = asset_folder + "green_leg.png"
-    target = asset_folder + "distorted_leg.png"
+    reference = asset_folder + "red_shirt_closed.png"
+    #reference = asset_folder + "red_shirt.png"
+    #target = asset_folder + "red_shirt_closed_uncolored.png"
+    target = asset_folder + "dead_red_shirt.png"
 
     # ============================================================
     # 1. Shape Matching and Auto-Colorization
@@ -34,11 +36,13 @@ def main():
         cv2.rectangle(img_boxes, (x, y), (x + w, y + h), (0, 255, 0), 3)
         cv2.putText(img_boxes, str(i), (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
 
-    plt.figure(figsize=(6, 6))
-    plt.imshow(img_boxes)
-    plt.title("Detected Objects (Green Bounding Boxes)")
-    plt.axis("off")
-    plt.show()
+    # Reference
+    ref_img, _, ref_contours, _ = extractor.extract(reference)
+    extractor.visualize_bounding_boxes(ref_img, ref_contours, "Reference - Detected Objects")
+
+    # Target
+    tgt_img, _, tgt_contours, _ = extractor.extract(target)
+    extractor.visualize_bounding_boxes(tgt_img, tgt_contours, "Target - Detected Objects")
 
     # ============================================================
     # 4. Final Auto-Colorization Results
