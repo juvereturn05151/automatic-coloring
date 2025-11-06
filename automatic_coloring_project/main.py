@@ -17,8 +17,8 @@ UNCOLORED_IMAGE_FOLDER = ASSET_FOLDER + "uncolored_images/"
 
 def main():
     # Change the File(s)' Name Here to Test With Other Images
-    reference = COLORED_IMAGE_FOLDER + "red_shirt_eye_color.png"
-    target = UNCOLORED_IMAGE_FOLDER + "red_shirt_closed_uncolored.png"
+    reference = COLORED_IMAGE_FOLDER + "shapes.png"
+    target = UNCOLORED_IMAGE_FOLDER + "shapes.png"
 
     # ============================================================
     # 1. Shape Matching and Auto-Colorization
