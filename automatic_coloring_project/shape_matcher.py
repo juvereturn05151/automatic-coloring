@@ -21,15 +21,55 @@ class ShapeMatcher:
         colorized_match = tgt_img.copy()
         print(f"Reference objects: {len(ref_objs)} | Target objects: {len(tgt_objs)}")
 
+        #new color & similar object dissociation variables
+        amountOfBestShapes = [0] * len(tgt_objs)
+        bestColors = [(0, 0, 0)] * len(tgt_objs)
+        colorsRecorded = 0
+
         # Compare each target contour against all reference contours
-        for t_idx, tgt in enumerate(tgt_objs):
+        for t_idx, tgt in enumerate(tgt_objs): # idx is index, tgt is object, tgt_objs is array of objects
             best_score = float('inf')
             best_color = (128, 128, 128)
+
+
+            tgt_position = centroid(tgt["contour"])
+
+            objectLocations = []
+            objectColors = []
+
             for ref in ref_objs:
                 score = cv2.matchShapes(tgt["contour"], ref["contour"], cv2.CONTOURS_MATCH_I1, 0.0)
-                if score < best_score:
+                if score <= best_score:
+                    print("Best score found : ", t_idx)
                     best_score = score
                     best_color = ref["color"]
+                    objectLocations.append(centroid( ref["contour"] ) )
+                    objectColors.append(ref["color"])
+
+            closestDistance = float('inf')
+            bestIndex = -1
+            for index, posibility in enumerate(objectLocations):
+                _x1, _y1 = tgt_position
+                _x2, _y2 = posibility
+                thisDistance = abs(_x1 - _x2) + abs(_y1 - _y2)
+                if closestDistance > thisDistance:
+                    bestIndex = index
+                    closestDistance = thisDistance
+
+            best_color = objectColors[bestIndex]
+
+            #region new color being referenced
+            color_exists = False
+            for i in range(colorsRecorded):
+                if bestColors[i] == best_color:
+                    color_exists = True
+                    amountOfBestShapes[i] += 1
+            if color_exists == False:
+                bestColors[colorsRecorded] = best_color
+                amountOfBestShapes[colorsRecorded] += 1
+                #print("New Color: ", best_color)
+                colorsRecorded += 1
+            #endregion
 
             print(f"Target {t_idx + 1}: matched color {best_color}, score={best_score:.5f}")
 
@@ -58,6 +98,16 @@ class ShapeMatcher:
             # --- Step 5. Paint region color ---
             colorized_match[full_region == 255] = best_color
 
+        #for i in range(colorsRecorded): # amountOfBestShapes:
+            #print("Best shape count: ", amountOfBestShapes[i])
+
         return ref_img, tgt_img, colorized_match
 
 
+def centroid(contour):
+    M = cv2.moments(contour)
+    if M["m00"] != 0:
+        return (int(M["m10"] / M["m00"]), int(M["m01"] / M["m00"]))
+    # fallback: bbox center if degenerate
+    x, y, w, h = cv2.boundingRect(contour)
+    return (x + w // 2, y + h // 2)
