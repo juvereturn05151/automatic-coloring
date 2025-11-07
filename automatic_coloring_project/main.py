@@ -17,8 +17,8 @@ UNCOLORED_IMAGE_FOLDER = ASSET_FOLDER + "uncolored_images/"
 
 def main():
     # Change the File(s)' Name Here to Test With Other Images
-    reference = COLORED_IMAGE_FOLDER + "red_shirt_eye_color.png"
-    target = UNCOLORED_IMAGE_FOLDER + "red_shirt_closed_uncolored.png"
+    reference = COLORED_IMAGE_FOLDER + "colored_test_frame.png"
+    target = UNCOLORED_IMAGE_FOLDER + "uncolored_test_frame.png"
 
     # ============================================================
     # 1. Shape Matching and Auto-Colorization
@@ -46,12 +46,14 @@ def main():
         cv2.putText(img_boxes, str(i), (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 3)
 
     # Reference
-    ref_img, _, ref_contours, _ = extractor.extract(reference)
-    visualize_bounding_boxes(ref_img, ref_contours, "Reference - Detected Objects")
+    ref_img, _, ref_contours, ref_objs = extractor.extract(reference)
+    ref_depths = [obj.get("depth", 0) for obj in ref_objs]
+    visualize_bounding_boxes(ref_img, ref_contours, "Reference - Detected Objects", depths=ref_depths)
 
     # Target
-    tgt_img, _, tgt_contours, _ = extractor.extract(target)
-    visualize_bounding_boxes(tgt_img, tgt_contours, "Target - Detected Objects")
+    tgt_img, _, tgt_contours, tgt_objs = extractor.extract(target)
+    tgt_depths = [obj.get("depth", 0) for obj in tgt_objs]
+    visualize_bounding_boxes(tgt_img, tgt_contours, "Target - Detected Objects", depths=tgt_depths)
 
     # ============================================================
     # 4. Final Auto-Colorization Results
