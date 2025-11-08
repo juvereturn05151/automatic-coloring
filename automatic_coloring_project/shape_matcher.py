@@ -12,6 +12,16 @@ from contour_extractor import ContourExtractor
 class ShapeMatcher:
     def __init__(self, contour_extractor=None):
         self._extractor = contour_extractor or ContourExtractor()
+    @staticmethod
+    def best_rotational_match(tgt_contour, ref_contour ):
+        step_deg = 10
+        best_score = float('inf')
+        for angle in range(0, 360, step_deg):
+            M = cv2.getRotationMatrix2D((0,0), angle, 1.0)
+            rotated = cv2.transform(tgt_contour, M)
+            score = cv2.matchShapes(rotated, ref_contour, cv2.CONTOURS_MATCH_I1, 0.0)
+            best_score = min(best_score, score)
+        return best_score
 
     def match_and_colorize(self, reference_path, target_path):
         """Extract shapes and colors"""
@@ -38,7 +48,8 @@ class ShapeMatcher:
             objectColors = []
 
             for ref in ref_objs:
-                score = cv2.matchShapes(tgt["contour"], ref["contour"], cv2.CONTOURS_MATCH_I1, 0.0)
+                # score = cv2.matchShapes(tgt["contour"], ref["contour"], cv2.CONTOURS_MATCH_I1, 0.0)
+                score = self.best_rotational_match(tgt["contour"], ref["contour"])
                 if score <= best_score:
                     print("Best score found : ", t_idx)
                     best_score = score
