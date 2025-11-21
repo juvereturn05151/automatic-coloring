@@ -114,8 +114,18 @@ class ShapeMatcher:
 
             # Flood from a point inside the shape (OpenCV finds interior)
             # We can sample a seed point from the contour’s bounding box
-            x, y, w_box, h_box = cv2.boundingRect(tgt["contour"])
-            seed_point = (x + w_box // 2, y + h_box // 2)
+            # Compute centroid from contour moments
+            M = cv2.moments(tgt["contour"])
+            if M["m00"] != 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+                seed_point = (cx, cy)
+            else:
+                # fallback to bounding box center if degenerate contour
+                x, y, w_box, h_box = cv2.boundingRect(tgt["contour"])
+                seed_point = (x + w_box // 2, y + h_box // 2)
+
+            
             cv2.floodFill(flood_filled, flood_mask_pad, seed_point, 255)
 
             # --- Step 3. Merge outline + filled area ---
