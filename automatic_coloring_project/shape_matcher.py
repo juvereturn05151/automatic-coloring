@@ -22,6 +22,23 @@ class ShapeMatcher:
             score = cv2.matchShapes(rotated, ref_contour, cv2.CONTOURS_MATCH_I1, 0.0)
             best_score = min(best_score, score)
         return best_score
+    @staticmethod
+    def hu_signature(cnt):
+        if cnt is None or len(cnt) < 5:
+            return np.zeros(7)
+        hu = cv2.HuMoments(cv2.moments(cnt)).flatten()
+        # log transform greatly stabilizes comparisons
+        return -np.sign(hu) * np.log1p(np.abs(hu))
+    @staticmethod
+    def hu_distance(tgt_contour,ref_contour):
+        hu1 = ShapeMatcher.hu_signature(tgt_contour)
+        hu2 = ShapeMatcher.hu_signature(ref_contour)
+        dist = np.linalg.norm(hu1 - hu2)
+        return dist
+    @staticmethod
+    def hu_similarity(cnt1, cnt2, sigma=0.3):
+        d = ShapeMatcher.hu_distance(cnt1, cnt2)
+        return float(np.exp(-d))
 
     def match_and_colorize(self, reference_path, target_path):
         """Extract shapes and colors"""
@@ -50,6 +67,7 @@ class ShapeMatcher:
             for ref in ref_objs:
                 # score = cv2.matchShapes(tgt["contour"], ref["contour"], cv2.CONTOURS_MATCH_I1, 0.0)
                 score = self.best_rotational_match(tgt["contour"], ref["contour"])
+                #score = self.hu_similarity(tgt["contour"],ref["contour"])
                 if score <= best_score:
                     print("Best score found : ", t_idx)
                     best_score = score
