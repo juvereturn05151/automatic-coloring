@@ -6,7 +6,7 @@ Copyright:    (c) 2025 DigiPen Institute of Technology. All rights reserved.
 
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
+
 
 class ContourExtractor:
     """Extract contours and regions from images based on color or outlines."""
@@ -60,9 +60,6 @@ class ContourExtractor:
         self._last_indices = accepted_indices
         if not mask_list:
             print("[Info] No masks created after filtering.")
-            plt.imshow(binary, cmap="gray")
-            plt.title("Debug: Binary Mask")
-            plt.show()
 
         return mask_list, accepted_indices
 
@@ -77,9 +74,6 @@ class ContourExtractor:
         # binary = cv2.morphologyEx(
         #     binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8), iterations=1
         # )
-        plt.imshow(binary, cmap="gray")
-        plt.title("Debug: Binary Mask")
-        plt.show()
         return binary
 
     def _find_all_contours(self, binary):

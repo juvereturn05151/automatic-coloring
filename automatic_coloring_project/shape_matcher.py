@@ -35,38 +35,35 @@ class ShapeMatcher:
         bestColors = [(0, 0, 0)] * len(tgt_objs)
         colorsRecorded = 0
 
+        tgt_objs_sorted = sorted(
+        tgt_objs,
+        key=lambda o: cv2.contourArea(o["contour"]),
+        reverse=True # Largest to smallest
+        )
+
         # Compare each target contour against all reference contours
-        for t_idx, tgt in enumerate(tgt_objs): # idx is index, tgt is object, tgt_objs is array of objects
+        for t_idx, tgt in enumerate(tgt_objs_sorted):
             best_score = float('inf')
+            best_dist  = float('inf')
             best_color = (128, 128, 128)
 
-
-            tgt_position = centroid(tgt["contour"])
-
-            objectLocations = []
-            objectColors = []
+            tx, ty = centroid(tgt["contour"])
 
             for ref in ref_objs:
-                # score = cv2.matchShapes(tgt["contour"], ref["contour"], cv2.CONTOURS_MATCH_I1, 0.0)
                 score = self.best_rotational_match(tgt["contour"], ref["contour"])
-                if score <= best_score:
-                    print("Best score found : ", t_idx)
+                rx, ry = centroid(ref["contour"])
+                dist = abs(tx - rx) + abs(ty - ry)
+
+                # Shape score first priority
+                if score < best_score - 1e-6:
                     best_score = score
+                    best_dist  = dist
                     best_color = ref["color"]
-                    objectLocations.append(centroid( ref["contour"] ) )
-                    objectColors.append(ref["color"])
 
-            closestDistance = float('inf')
-            bestIndex = -1
-            for index, posibility in enumerate(objectLocations):
-                _x1, _y1 = tgt_position
-                _x2, _y2 = posibility
-                thisDistance = abs(_x1 - _x2) + abs(_y1 - _y2)
-                if closestDistance > thisDistance:
-                    bestIndex = index
-                    closestDistance = thisDistance
-
-            best_color = objectColors[bestIndex]
+                # Shape score tie-breaker: prefer closer centroid
+                elif abs(score - best_score) <= 1e-6 and dist < best_dist:
+                    best_dist  = dist
+                    best_color = ref["color"]
 
             #region new color being referenced
             color_exists = False
