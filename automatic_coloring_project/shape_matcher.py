@@ -4,6 +4,7 @@ Author(s):    Ju-ve Chankasemporn
 Copyright:    (c) 2025 DigiPen Institute of Technology. All rights reserved.
 """
 
+import os
 import cv2
 import numpy as np
 from skimage.morphology import skeletonize
@@ -91,6 +92,145 @@ def skeleton_midpoint(mask):
 
 
 # ------------------------------------------------------------
+# Debug drawing helpers (image-based)
+# ------------------------------------------------------------
+
+def _ensure_debug_dir():
+    """Create debug directory if missing."""
+    debug_dir = "debug"
+    os.makedirs(debug_dir, exist_ok=True)
+    return debug_dir
+
+
+def draw_labeled_regions(image_rgb, objects, id_prefix, out_name):
+    """
+    Draw each region contour with an index label at its skeleton midpoint.
+
+    image_rgb : original RGB image
+    objects   : list of dicts from ContourExtractor (must have "contour" and "mask")
+    id_prefix : "R" for reference or "T" for target
+    out_name  : filename inside debug/ folder
+    """
+    if image_rgb is None or not objects:
+        return
+
+    debug_dir = _ensure_debug_dir()
+
+    # Convert RGB → BGR for OpenCV drawing
+    img_bgr = cv2.cvtColor(image_rgb.copy(), cv2.COLOR_RGB2BGR)
+
+    for idx, obj in enumerate(objects):
+        cnt = obj["contour"]
+        mask = obj.get("mask", None)
+
+        if mask is not None:
+            cx, cy = skeleton_midpoint(mask)
+        else:
+            cx, cy = centroid(cnt)
+
+        # Random-ish color per index (just for visualization)
+        color = (
+            int(50 + (idx * 70) % 205),
+            int(80 + (idx * 40) % 175),
+            int(120 + (idx * 90) % 135),
+        )
+
+        # Draw contour
+        cv2.drawContours(img_bgr, [cnt], -1, color, 2)
+
+        # Draw center
+        cv2.circle(img_bgr, (cx, cy), 4, (0, 255, 255), -1)
+
+        # Put label
+        label = f"{id_prefix}{idx}"
+        cv2.putText(
+            img_bgr,
+            label,
+            (cx + 5, cy - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 0),
+            2,
+        )
+
+    out_path = os.path.join(debug_dir, out_name)
+    cv2.imwrite(out_path, img_bgr)
+    print(f"[Debug] Saved labeled {id_prefix} regions → {out_path}")
+
+
+def draw_matching_lines(ref_img, tgt_img, matches, out_name="matching_lines.png"):
+    """
+    Draw ref image on the left, target on the right,
+    and lines connecting matched centers (ref ↔ tgt).
+
+    'matches' is a list of dicts:
+        {
+          "tgt_idx": int,         # original index in tgt_objs
+          "ref_idx": int,         # original index in ref_objs
+          "tgt_center": (tx, ty),
+          "ref_center": (rx, ry),
+        }
+    """
+    if ref_img is None or tgt_img is None or not matches:
+        return
+
+    debug_dir = _ensure_debug_dir()
+
+    ref_h, ref_w = ref_img.shape[:2]
+    tgt_h, tgt_w = tgt_img.shape[:2]
+    canvas_h = max(ref_h, tgt_h)
+    gap = 40
+
+    # Create canvas RGB
+    canvas_w = ref_w + gap + tgt_w
+    canvas = np.ones((canvas_h, canvas_w, 3), dtype=np.uint8) * 255
+
+    # Blit images
+    canvas[0:ref_h, 0:ref_w] = ref_img
+    canvas[0:tgt_h, ref_w + gap: ref_w + gap + tgt_w] = tgt_img
+
+    # Convert to BGR for drawing
+    canvas_bgr = cv2.cvtColor(canvas, cv2.COLOR_RGB2BGR)
+
+    for idx, m in enumerate(matches):
+        (rx, ry) = m["ref_center"]
+        (tx, ty) = m["tgt_center"]
+
+        # offset target x by left width + gap
+        tx_canvas = ref_w + gap + tx
+        ty_canvas = ty
+
+        color = (
+            int(50 + (idx * 70) % 205),
+            int(80 + (idx * 40) % 175),
+            int(120 + (idx * 90) % 135),
+        )
+
+        # Draw circles
+        cv2.circle(canvas_bgr, (rx, ry), 5, color, -1)
+        cv2.circle(canvas_bgr, (tx_canvas, ty_canvas), 5, color, -1)
+
+        # Draw line
+        cv2.line(canvas_bgr, (rx, ry), (tx_canvas, ty_canvas), color, 2)
+
+        # Put label near target side: "T# → R#"
+        label = f"T{m['tgt_idx']}→R{m['ref_idx']}"
+        cv2.putText(
+            canvas_bgr,
+            label,
+            (tx_canvas + 5, ty_canvas - 5),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.6,
+            (0, 0, 0),
+            2,
+        )
+
+    out_path = os.path.join(debug_dir, out_name)
+    cv2.imwrite(out_path, canvas_bgr)
+    print(f"[Debug] Saved matching lines → {out_path}")
+
+
+# ------------------------------------------------------------
 # Main matcher
 # ------------------------------------------------------------
 
@@ -153,21 +293,31 @@ class ShapeMatcher:
             return ref_img, tgt_img, colorized_match
 
         # ----------------------------------------------------
+        # DEBUG: labeled images with IDs on shapes
+        # ----------------------------------------------------
+        draw_labeled_regions(ref_img, ref_objs, "R", "reference_labeled.png")
+        draw_labeled_regions(tgt_img, tgt_objs, "T", "target_labeled.png")
+
+        # ----------------------------------------------------
         # Sort targets from largest → smallest (stable painting)
+        # BUT keep original index for debug IDs (T0, T1, ...)
         # ----------------------------------------------------
         tgt_objs_sorted = sorted(
-            tgt_objs,
-            key=lambda o: cv2.contourArea(o["contour"]),
+            list(enumerate(tgt_objs)),   # (orig_idx, obj)
+            key=lambda pair: cv2.contourArea(pair[1]["contour"]),
             reverse=True
         )
+
+        # For matching-lines debug
+        match_pairs = []
 
         # ----------------------------------------------------
         # Matching loop (greedy, per target region)
         # ----------------------------------------------------
-        for t_idx, tgt in enumerate(tgt_objs_sorted):
+        for sort_idx, (orig_tgt_idx, tgt) in enumerate(tgt_objs_sorted):
 
             print("\n====================================")
-            print(f"### TARGET REGION {t_idx + 1} ###")
+            print(f"### TARGET REGION {sort_idx + 1} (T{orig_tgt_idx}) ###")
             print("====================================\n")
 
             tgt_cnt = tgt["contour"]
@@ -193,6 +343,7 @@ class ShapeMatcher:
             best_cost = float("inf")
             best_color = None
             best_ref_id = None
+            best_ref_center = None
 
             ranking_debug = []
 
@@ -233,9 +384,9 @@ class ShapeMatcher:
                 if not (self.AREA_RATIO_MIN <= area_ratio <= self.AREA_RATIO_MAX):
                     print("     ❌ rejected: area ratio\n")
                     continue
-                if aspect_diff > self.ASPECT_TOL:
-                    print("     ❌ rejected: aspect\n")
-                    continue
+                #if aspect_diff > self.ASPECT_TOL:
+                #    print("     ❌ rejected: aspect\n")
+                #    continue
                 if extent_diff > self.EXTENT_TOL:
                     print("     ❌ rejected: extent\n")
                     continue
@@ -271,6 +422,7 @@ class ShapeMatcher:
                     best_cost = cost
                     best_color = r_obj["color"]
                     best_ref_id = rid
+                    best_ref_center = (rx, ry)
 
             # ---------- show ranking for this target ----------
             ranking_debug.sort()
@@ -291,16 +443,35 @@ class ShapeMatcher:
                 cy = int(np.clip(ty, 0, h - 1))
                 sampled = ref_img[cy, cx]  # ref_img is RGB
                 best_color = (int(sampled[0]), int(sampled[1]), int(sampled[2]))
-                print(f"[Match] Target {t_idx+1}: fallback sampled color {best_color}")
+                print(f"[Match] Target {sort_idx+1} (T{orig_tgt_idx}): fallback sampled color {best_color}")
             else:
                 print(
-                    f"[Match] Target {t_idx+1}: matched color {best_color}, "
+                    f"[Match] Target {sort_idx+1} (T{orig_tgt_idx}): matched color {best_color}, "
                     f"best_cost={best_cost:.6f}, t_circ={t_circ:.3f}"
                 )
+                # Save match pair for line visualization
+                if best_ref_center is not None:
+                    match_pairs.append({
+                        "tgt_idx": orig_tgt_idx,         # index used in T#
+                        "ref_idx": best_ref_id,         # index used in R#
+                        "tgt_center": (tx, ty),
+                        "ref_center": best_ref_center,
+                    })
 
             # ------------------------------------------------
             # Paint using the TRUE region mask
             # ------------------------------------------------
             colorized_match[tgt_mask == 255] = best_color
+
+        # ----------------------------------------------------
+        # DEBUG: matching-lines visualization
+        # ----------------------------------------------------
+        if match_pairs:
+            draw_matching_lines(
+                ref_img,
+                colorized_match,  # show final colored target on the right
+                match_pairs,
+                out_name="matching_lines.png",
+            )
 
         return ref_img, tgt_img, colorized_match
