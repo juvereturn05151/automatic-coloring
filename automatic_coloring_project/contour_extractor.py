@@ -56,7 +56,9 @@ class ContourExtractor:
             self._last_hierarchy = None
             return None
 
-        mask_list, accepted_indices = self._create_non_overlapping_masks(gray, contours, hierarchy)
+        mask_list, accepted_indices = self._create_non_overlapping_masks(
+            gray, contours, hierarchy
+        )
         self._last_indices = accepted_indices
         if not mask_list:
             print("[Info] No masks created after filtering.")
@@ -66,8 +68,12 @@ class ContourExtractor:
     def _threshold_outline(self, gray):
         """Apply adaptive threshold and cleanup for outlines."""
         binary = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV, 15, 5
+            gray,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY_INV,
+            15,
+            5,
         )
 
         # binary = cv2.dilate(binary, np.ones((3, 3), np.uint8), iterations=1)
@@ -94,7 +100,9 @@ class ContourExtractor:
 
         if hierarchy is not None:
             original = hierarchy[0]
-            old_to_new = {old_idx: new_idx for new_idx, old_idx in enumerate(sorted_indices)}
+            old_to_new = {
+                old_idx: new_idx for new_idx, old_idx in enumerate(sorted_indices)
+            }
             remap = np.full_like(original, -1)
 
             def _convert(idx):
@@ -142,6 +150,7 @@ class ContourExtractor:
             depth = self._calculate_depth(idx, hierarchy)
             if depth % 2 == 1:
                 continue
+
             temp_mask = np.zeros_like(gray, dtype=np.uint8)
             cv2.drawContours(temp_mask, [c], -1, 255, thickness=cv2.FILLED)
 
@@ -160,8 +169,8 @@ class ContourExtractor:
             #     accepted_indices.append(idx)
 
         return mask_list, accepted_indices
-    
- # ------------------------------------------------------------
+
+    # ------------------------------------------------------------
     # Colored Mode Processing
     # ------------------------------------------------------------
     def _process_colored_mode(self, img_rgb):
@@ -182,7 +191,8 @@ class ContourExtractor:
         Z = np.float32(img_rgb.reshape((-1, 3)))
         criteria = (
             cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-            10, 1.0
+            10,
+            1.0,
         )
         _, labels, centers = cv2.kmeans(
             Z, self._color_clusters, None, criteria, 10, cv2.KMEANS_PP_CENTERS
@@ -226,29 +236,56 @@ class ContourExtractor:
         return img_rgb, gray, [obj["contour"] for obj in objects], objects
 
     def _extract_objects(self, img_rgb, gray, mask_list, contour_indices=None):
-        """Generate contour objects with their average colors."""
+        """
+        Generate contour objects with their average colors and per-contour masks.
+        Each returned object has:
+            - "contour": the contour of this region
+            - "color":   mean RGB color in this region
+            - "depth":   hierarchical depth (if available)
+            - "source_index": index into the original contour list (if any)
+            - "mask":    binary mask (0 or 255) for this contour only
+        """
         if contour_indices is None:
             contour_indices = [None] * len(mask_list)
+
         objects = []
+
         for mask_idx, mask in enumerate(mask_list):
-            source_idx = contour_indices[mask_idx] if mask_idx < len(contour_indices) else None
+            source_idx = (
+                contour_indices[mask_idx]
+                if mask_idx < len(contour_indices)
+                else None
+            )
+
+            # Find connected regions in this mask
             contours, _ = cv2.findContours(
                 mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
+
             for c in contours:
                 if cv2.contourArea(c) < self._min_area:
                     continue
-                region_mask = np.zeros(gray.shape, dtype=np.uint8)
+
+                # Build a fresh per-contour region mask (0 or 255)
+                region_mask = np.zeros_like(gray, dtype=np.uint8)
                 cv2.drawContours(region_mask, [c], -1, 255, thickness=cv2.FILLED)
+
+                # Mean color inside this region
                 mean_color = cv2.mean(img_rgb, region_mask)
                 color = tuple(int(v) for v in mean_color[:3])
+
                 depth = self._contour_depth(source_idx)
-                objects.append({
-                    "contour": c,
-                    "color": color,
-                    "depth": depth,
-                    "source_index": source_idx,
-                })
+
+                objects.append(
+                    {
+                        "contour": c,
+                        "color": color,
+                        "depth": depth,
+                        "source_index": source_idx,
+                        "mask": region_mask,
+                    }
+                )
+
         return objects
 
     def _contour_depth(self, contour_idx):
