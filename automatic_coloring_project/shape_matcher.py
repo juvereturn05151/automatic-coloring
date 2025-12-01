@@ -10,6 +10,7 @@ import numpy as np
 from skimage.morphology import skeletonize
 
 from contour_extractor import ContourExtractor
+from graph_matcher import GraphMatcher
 
 
 # ------------------------------------------------------------
@@ -238,7 +239,8 @@ class ShapeMatcher:
     def __init__(self, contour_extractor=None):
         self._extractor = contour_extractor or ContourExtractor()
 
-        # Tunable thresholds
+        # (These thresholds are now unused by the graph matcher, but kept
+        #  in case you want to reintroduce heuristic filters later.)
         self.AREA_RATIO_MIN = 0.3
         self.AREA_RATIO_MAX = 3.0
         self.ASPECT_TOL     = 0.5   # max |aspect_tgt - aspect_ref|
@@ -247,8 +249,9 @@ class ShapeMatcher:
 
     def match_and_colorize(self, reference_path, target_path):
         """
-        Extract shapes from reference and target, match them,
-        and transfer colors from reference to target.
+        Extract shapes from reference and target, match them using
+        graph-based region matching, and transfer colors from reference
+        to target.
         """
 
         # ----------------------------------------------------
@@ -266,202 +269,65 @@ class ShapeMatcher:
         h, w = tgt_gray.shape
 
         # ----------------------------------------------------
-        # Precompute simple geometric descriptors for refs
-        # ----------------------------------------------------
-        ref_info = []
-        for idx, ref in enumerate(ref_objs):
-            cnt = ref["contour"]
-            area = cv2.contourArea(cnt)
-            if area <= 0:
-                continue
-
-            ar   = aspect_ratio(cnt)
-            ext  = extent(cnt)
-            circ = circularity(cnt)
-            cx, cy = centroid(cnt)
-
-            ref_info.append({
-                "obj": ref,
-                "area": area,
-                "aspect": ar,
-                "extent": ext,
-                "circ": circ,
-                "centroid": (cx, cy),
-            })
-
-        if not ref_info:
-            return ref_img, tgt_img, colorized_match
-
-        # ----------------------------------------------------
         # DEBUG: labeled images with IDs on shapes
         # ----------------------------------------------------
         draw_labeled_regions(ref_img, ref_objs, "R", "reference_labeled.png")
         draw_labeled_regions(tgt_img, tgt_objs, "T", "target_labeled.png")
 
         # ----------------------------------------------------
-        # Sort targets from largest → smallest (stable painting)
-        # BUT keep original index for debug IDs (T0, T1, ...)
+        # GRAPH MATCHING
         # ----------------------------------------------------
-        tgt_objs_sorted = sorted(
-            list(enumerate(tgt_objs)),   # (orig_idx, obj)
-            key=lambda pair: cv2.contourArea(pair[1]["contour"]),
-            reverse=True
+        print("\n[ShapeMatcher] Running GraphMatcher…")
+
+        gm = GraphMatcher(
+            nbins_shape=16,
+            pos_weight=2.0,
+            area_weight=1.0,
+            degree_weight=1.0,
+            shape_weight=3.0,
+            debug=True,
         )
 
-        # For matching-lines debug
+        mapping = gm.match(ref_objs, tgt_objs)
+
+        print("\n[ShapeMatcher] GraphMatcher mapping result:")
+        for t_idx, r_idx in mapping.items():
+            print(f"   T{t_idx} → R{r_idx}")
+
+        # ----------------------------------------------------
+        # Colorize using graph match result
+        # ----------------------------------------------------
         match_pairs = []
 
-        # ----------------------------------------------------
-        # Matching loop (greedy, per target region)
-        # ----------------------------------------------------
-        for sort_idx, (orig_tgt_idx, tgt) in enumerate(tgt_objs_sorted):
-
-            print("\n====================================")
-            print(f"### TARGET REGION {sort_idx + 1} (T{orig_tgt_idx}) ###")
-            print("====================================\n")
-
-            tgt_cnt = tgt["contour"]
-            tgt_mask = tgt["mask"]  # from ContourExtractor
-            tgt_area = cv2.contourArea(tgt_cnt)
-
-            if tgt_area <= 0:
-                print("  Target area <= 0, skipping.")
+        for t_idx, tgt in enumerate(tgt_objs):
+            mask = tgt["mask"]
+            if mask is None:
                 continue
 
-            # Target descriptors
-            t_ar   = aspect_ratio(tgt_cnt)
-            t_ext  = extent(tgt_cnt)
-            t_circ = circularity(tgt_cnt)
-            tx, ty = skeleton_midpoint(tgt_mask)
+            tx, ty = skeleton_midpoint(mask)
+            r_idx = mapping.get(t_idx, None)
 
-            print(f"Target area      = {tgt_area:.2f}")
-            print(f"Target aspect    = {t_ar:.3f}")
-            print(f"Target extent    = {t_ext:.3f}")
-            print(f"Target circular. = {t_circ:.3f}")
-            print(f"Target center    = (tx={tx}, ty={ty})\n")
-
-            best_cost = float("inf")
-            best_color = None
-            best_ref_id = None
-            best_ref_center = None
-
-            ranking_debug = []
-
-            # ---------- loop over references ----------
-            for rid, info in enumerate(ref_info):
-
-                r_obj = info["obj"]
-                r_cnt = r_obj["contour"]
-
-                r_area = info["area"]
-                r_ar   = info["aspect"]
-                r_ext  = info["extent"]
-                r_circ = info["circ"]
-                rx, ry = skeleton_midpoint(r_obj["mask"])
-
-                print(f"  >> Testing REF {rid} color={r_obj['color']}")
-                print(f"     ref_area   = {r_area:.2f}")
-                print(f"     ref_aspect = {r_ar:.3f}")
-                print(f"     ref_extent = {r_ext:.3f}")
-                print(f"     ref_circ   = {r_circ:.3f}")
-                print(f"     ref_center = (rx={rx}, ry={ry})")
-
-                # -----------------------------
-                # Quick geometric filters
-                # -----------------------------
-                area_ratio  = tgt_area / (r_area + 1e-6)
-                aspect_diff = abs(t_ar - r_ar)
-                extent_diff = abs(t_ext - r_ext)
-                circ_diff   = abs(t_circ - r_circ)
-
-                print("     Filters:")
-                print(f"       area_ratio     = {area_ratio:.3f}  (range {self.AREA_RATIO_MIN}-{self.AREA_RATIO_MAX})")
-                print(f"       |aspect diff|  = {aspect_diff:.3f} (tol {self.ASPECT_TOL})")
-                print(f"       |extent diff|  = {extent_diff:.3f} (tol {self.EXTENT_TOL})")
-                print(f"       |circ diff|    = {circ_diff:.3f} (tol {self.CIRC_TOL})")
-
-                # Filter checks
-                if not (self.AREA_RATIO_MIN <= area_ratio <= self.AREA_RATIO_MAX):
-                    print("     ❌ rejected: area ratio\n")
-                    continue
-                #if aspect_diff > self.ASPECT_TOL:
-                #    print("     ❌ rejected: aspect\n")
-                #    continue
-                if extent_diff > self.EXTENT_TOL:
-                    print("     ❌ rejected: extent\n")
-                    continue
-                if circ_diff > self.CIRC_TOL:
-                    print("     ❌ rejected: circularity\n")
-                    continue
-
-                # -----------------------------
-                # Shape similarity (with rotation)
-                # -----------------------------
-                shape_score = best_rotational_match(tgt_cnt, r_cnt)
-
-                # -----------------------------
-                # Centroid distance (tie breaker)
-                # -----------------------------
-                dist = abs(tx - rx) + abs(ty - ry)
-
-                # Combined cost (weights chosen empirically)
-                # shape_score dominates, big weight on distance
-                cost = (
-                    shape_score +
-                    0.2 * abs(area_ratio - 1.0) +
-                    1.0 * dist
-                )
-
-                print(f"     shape_score   = {shape_score:.6f}")
-                print(f"     centroid_dist = {dist:.3f}")
-                print(f"     FINAL COST    = {cost:.6f}\n")
-
-                ranking_debug.append((cost, rid, r_obj["color"]))
-
-                if cost < best_cost:
-                    best_cost = cost
-                    best_color = r_obj["color"]
-                    best_ref_id = rid
-                    best_ref_center = (rx, ry)
-
-            # ---------- show ranking for this target ----------
-            ranking_debug.sort()
-            print("=== FINAL RANKINGS FOR THIS TARGET ===")
-            for rank, (cost, rid, col) in enumerate(ranking_debug):
-                print(f"   #{rank+1}: REF {rid} color={col} cost={cost:.6f}")
-            if best_color is not None:
-                print(f"\n### WINNER REF {best_ref_id} → color={best_color} ###\n")
-            else:
-                print("\n### NO REF PASSED FILTERS → FALLBACK COLOR ###\n")
-
-            # ------------------------------------------------
-            # If no match passed filters, fall back to sampling
-            # reference color at the target center
-            # ------------------------------------------------
-            if best_color is None:
+            if r_idx is None:
+                # Fallback: sample color from reference at the target center
                 cx = int(np.clip(tx, 0, w - 1))
                 cy = int(np.clip(ty, 0, h - 1))
                 sampled = ref_img[cy, cx]  # ref_img is RGB
                 best_color = (int(sampled[0]), int(sampled[1]), int(sampled[2]))
-                print(f"[Match] Target {sort_idx+1} (T{orig_tgt_idx}): fallback sampled color {best_color}")
+                print(f"[Colorize] T{t_idx}: fallback sampled color {best_color}")
             else:
-                print(
-                    f"[Match] Target {sort_idx+1} (T{orig_tgt_idx}): matched color {best_color}, "
-                    f"best_cost={best_cost:.6f}, t_circ={t_circ:.3f}"
-                )
-                # Save match pair for line visualization
-                if best_ref_center is not None:
-                    match_pairs.append({
-                        "tgt_idx": orig_tgt_idx,         # index used in T#
-                        "ref_idx": best_ref_id,         # index used in R#
-                        "tgt_center": (tx, ty),
-                        "ref_center": best_ref_center,
-                    })
+                best_color = ref_objs[r_idx]["color"]
+                print(f"[Colorize] T{t_idx}: matched R{r_idx} with color {best_color}")
 
-            # ------------------------------------------------
-            # Paint using the TRUE region mask
-            # ------------------------------------------------
-            colorized_match[tgt_mask == 255] = best_color
+                # Save match pair for line visualization
+                rx, ry = skeleton_midpoint(ref_objs[r_idx]["mask"])
+                match_pairs.append({
+                    "tgt_idx": t_idx,         # index used in T#
+                    "ref_idx": r_idx,         # index used in R#
+                    "tgt_center": (tx, ty),
+                    "ref_center": (rx, ry),
+                })
+
+            colorized_match[mask == 255] = best_color
 
         # ----------------------------------------------------
         # DEBUG: matching-lines visualization
@@ -473,5 +339,13 @@ class ShapeMatcher:
                 match_pairs,
                 out_name="matching_lines.png",
             )
+
+        tgt_gray = cv2.cvtColor(tgt_img, cv2.COLOR_RGB2GRAY)
+
+        # detect outline pixels (dark lines)
+        outline_mask = (tgt_gray < 80).astype(np.uint8)  # threshold can be tuned
+
+        # apply black color on outlines
+        colorized_match[outline_mask == 1] = (0, 0, 0)
 
         return ref_img, tgt_img, colorized_match

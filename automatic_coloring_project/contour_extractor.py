@@ -1,7 +1,7 @@
 """
 File Name:    contour_extractor.py
 Author(s):    Ju-ve Chankasemporn
-Copyright:    (c) 2025 DigiPen Institute of Technology. All rights reserved.
+Rewritten:    unified edge-based segmentation for both colored and outline images.
 """
 
 import cv2
@@ -9,298 +9,225 @@ import numpy as np
 
 
 class ContourExtractor:
-    """Extract contours and regions from images based on color or outlines."""
+    """
+    Extract regions from both colored and outline images using the SAME logic:
 
-    def __init__(self, min_area=10, morph_kernel_size=5, color_clusters=4):
+    1. Convert to grayscale
+    2. Detect edges (Canny)
+    3. Dilate edges to form "walls"
+    4. Connected components on free space (non-wall pixels)
+    5. Remove background component (touching outer border)
+    6. Merge very small components into their largest neighbor
+    7. For each remaining component, build:
+         - "mask" (0/255)
+         - "contour"
+         - "color" = mean RGB (for reference images)
+         - "depth" = 0
+         - "source_index" = component id
+    """
+
+    def __init__(
+        self,
+        min_area=50,
+        canny_low=50,
+        canny_high=150,
+        merge_rel_thresh=0.03,
+        merge_abs_thresh=30,
+        dilate_kernel_size=3,
+    ):
         self._min_area = min_area
-        self._kernel = np.ones((morph_kernel_size, morph_kernel_size), np.uint8)
-        self._color_clusters = color_clusters
-        self._last_contours = []
-        self._last_hierarchy = None
-        self._last_indices = []
+        self._canny_low = canny_low
+        self._canny_high = canny_high
+        self._merge_rel_thresh = merge_rel_thresh
+        self._merge_abs_thresh = merge_abs_thresh
+        self._kernel = np.ones((dilate_kernel_size, dilate_kernel_size), np.uint8)
 
     # ------------------------------------------------------------
-    # Preprocessing
+    # Public entry point
     # ------------------------------------------------------------
-    def preprocess(self, image_path):
-        """Load image from path and convert it to RGB and grayscale."""
-        img = cv2.imread(image_path)
-        if img is None:
-            print(f"[Warning] Could not read image: {image_path}")
-            return None
-        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
-        return img_rgb, gray
+    def extract(self, image_path):
+        """
+        Extract regions from an image. Returns:
+            img_rgb, gray, contours_list, objects_list
 
-    def is_outline_drawing(self, gray):
-        """Return True if image is outline drawing (bright bg, dark lines)."""
-        pixels = gray.flatten()
-        dark_ratio = np.sum(pixels < 60) / len(pixels)
-        bright_ratio = np.sum(pixels >= 200) / len(pixels)
-        return bright_ratio > 0.7 and dark_ratio < 0.1
-
-    # ------------------------------------------------------------
-    # Outline Mode Processing
-    # ------------------------------------------------------------
-    def _process_outline_mode(self, gray):
-        """Detect contours from an outline (black-line) drawing."""
-        binary = self._threshold_outline(gray)
-        contours, hierarchy = self._find_all_contours(binary)
-        self._last_contours = contours
-        self._last_hierarchy = hierarchy
-        self._last_indices = []
-
-        if not contours:
-            print("[Warning] No contours found. Check thresholding.")
-            self._last_contours = []
-            self._last_hierarchy = None
-            return None
-
-        mask_list, accepted_indices = self._create_non_overlapping_masks(
-            gray, contours, hierarchy
-        )
-        self._last_indices = accepted_indices
-        if not mask_list:
-            print("[Info] No masks created after filtering.")
-
-        return mask_list, accepted_indices
-
-    def _threshold_outline(self, gray):
-        """Apply adaptive threshold and cleanup for outlines."""
-        binary = cv2.adaptiveThreshold(
-            gray,
-            255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY_INV,
-            15,
-            5,
-        )
-
-        # binary = cv2.dilate(binary, np.ones((3, 3), np.uint8), iterations=1)
-        # binary = cv2.morphologyEx(
-        #     binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8), iterations=1
-        # )
-        return binary
-
-    def _find_all_contours(self, binary):
-        """Return all contours from binary image."""
-        contours, hierarchy = cv2.findContours(
-            binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE
-        )
-
-        if not contours:
-            return [], None
-
-        sorted_indices = sorted(
-            range(len(contours)),
-            key=lambda i: cv2.contourArea(contours[i]),
-        )
-
-        sorted_contours = [contours[i] for i in sorted_indices]
-
-        if hierarchy is not None:
-            original = hierarchy[0]
-            old_to_new = {
-                old_idx: new_idx for new_idx, old_idx in enumerate(sorted_indices)
+        objects_list is a list of dicts:
+            {
+                "contour": np.ndarray,
+                "color": (r, g, b),
+                "depth": 0,
+                "source_index": label_id,
+                "mask": 2D uint8 (0 or 255),
             }
-            remap = np.full_like(original, -1)
+        """
+        img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
+        if img_bgr is None:
+            print(f"[ContourExtractor] WARNING: cannot read '{image_path}'")
+            return None, None, [], []
 
-            def _convert(idx):
-                return old_to_new.get(idx, -1) if idx != -1 else -1
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+        gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
 
-            for new_idx, old_idx in enumerate(sorted_indices):
-                next_idx, prev_idx, child_idx, parent_idx = original[old_idx]
-                remap[new_idx] = [
-                    _convert(next_idx),
-                    _convert(prev_idx),
-                    _convert(child_idx),
-                    _convert(parent_idx),
-                ]
+        labels, bg_label = self._segment_by_edges(gray)
+        labels = self._merge_small_regions(labels, bg_label)
 
-            sorted_hierarchy = remap.reshape(1, -1, 4)
-        else:
-            sorted_hierarchy = None
+        objects = self._labels_to_objects(img_rgb, gray, labels, bg_label)
+        contours = [o["contour"] for o in objects]
 
-        return sorted_contours, sorted_hierarchy
+        print(
+            f"[ContourExtractor] '{image_path}': "
+            f"{len(objects)} regions (bg_label={bg_label})"
+        )
 
-    def _calculate_depth(self, idx, hierarchy):
-        """Calculate hierarchical depth of a contour given its index."""
-        if hierarchy is None or len(hierarchy) == 0:
-            return 0
+        return img_rgb, gray, contours, objects
 
-        depth = 0
-        parent = hierarchy[0][idx][3]  # hierarchy[0][idx] = [next, prev, child, parent]
-        while parent != -1:
-            depth += 1
-            parent = hierarchy[0][parent][3]
-        return depth
+    # ------------------------------------------------------------
+    # Edge-based segmentation
+    # ------------------------------------------------------------
+    def _segment_by_edges(self, gray):
+        """
+        Use Canny edges as walls, then connected components on the free space.
+        Returns: labels (int32 HxW), background_label
+        """
+        # 1. edges
+        edges = cv2.Canny(gray, self._canny_low, self._canny_high)
 
-    def _create_non_overlapping_masks(self, gray, contours, hierarchy):
-        """Create filled masks while avoiding overlapping regions and excluding odd-depth contours."""
-        accepted_masks = np.zeros_like(gray, dtype=np.uint8)
-        mask_list = []
-        accepted_indices = []
+        # 2. dilate edges to thicken walls
+        walls = cv2.dilate(edges, self._kernel, iterations=1)
 
-        for idx, c in enumerate(contours):
-            area = cv2.contourArea(c)
+        # 3. free space (non-walls) -> binary 0/1
+        free = (walls == 0).astype(np.uint8)
+
+        # 4. connected components (background and regions)
+        num_labels, labels = cv2.connectedComponents(free, connectivity=8)
+
+        # 5. determine which label is background:
+        #    any label that touches the border is a candidate; we pick the largest.
+        h, w = labels.shape
+        border_labels = np.concatenate(
+            [
+                labels[0, :],
+                labels[h - 1, :],
+                labels[:, 0],
+                labels[:, w - 1],
+            ]
+        )
+        border_labels = np.unique(border_labels)
+
+        bg_label = 0
+        max_area = -1
+        for lb in border_labels:
+            area = int(np.sum(labels == lb))
+            if area > max_area:
+                max_area = area
+                bg_label = int(lb)
+
+        return labels, bg_label
+
+    # ------------------------------------------------------------
+    # Merge small components into neighbors
+    # ------------------------------------------------------------
+    def _merge_small_regions(self, labels, bg_label):
+        """
+        Merge very small labels into their largest neighbor to avoid
+        tiny star/eye/button regions that don't exist in the line art.
+        """
+        h, w = labels.shape
+        unique_labels, counts = np.unique(labels, return_counts=True)
+
+        # Map label -> area
+        area_map = {int(l): int(c) for l, c in zip(unique_labels, counts)}
+
+        # total area of all non-background
+        total_non_bg = sum(
+            area for lb, area in area_map.items() if lb != bg_label
+        )
+        if total_non_bg <= 0:
+            return labels
+
+        abs_thresh = max(self._merge_abs_thresh, self._min_area)
+        rel_thresh = self._merge_rel_thresh
+
+        # Process labels from smallest to largest (excluding background)
+        small_labels = [
+            (lb, area)
+            for lb, area in area_map.items()
+            if lb != bg_label
+        ]
+        small_labels.sort(key=lambda x: x[1])
+
+        kernel = np.ones((1, 1), np.uint8)
+        labels_out = labels.copy()
+
+        for lb, area in small_labels:
+            if area <= 0 or lb == bg_label:
+                continue
+
+            if area > abs_thresh and area > rel_thresh * total_non_bg:
+                # big enough, keep as its own region
+                continue
+
+            mask = (labels_out == lb).astype(np.uint8)
+            if np.count_nonzero(mask) == 0:
+                continue
+
+            # Dilate and find neighbor labels
+            dil = cv2.dilate(mask, kernel, iterations=1)
+            neighbors = labels_out[dil > 0]
+            neighbors = neighbors[neighbors != lb]
+            neighbors = neighbors[neighbors != bg_label]
+
+            if neighbors.size == 0:
+                # nothing suitable to merge into; keep it
+                continue
+
+            # Merge into most overlapped neighbor
+            vals, counts_n = np.unique(neighbors, return_counts=True)
+            new_label = int(vals[np.argmax(counts_n)])
+
+            labels_out[labels_out == lb] = new_label
+
+        return labels_out
+
+    # ------------------------------------------------------------
+    # Build objects from labels
+    # ------------------------------------------------------------
+    def _labels_to_objects(self, img_rgb, gray, labels, bg_label):
+        """
+        Convert the integer label map into a list of region objects.
+        """
+        h, w = labels.shape
+        objects = []
+
+        unique_labels = np.unique(labels)
+        for lb in unique_labels:
+            if lb == bg_label:
+                continue
+
+            mask = (labels == lb).astype(np.uint8) * 255
+            area = int(np.count_nonzero(mask))
             if area < self._min_area:
                 continue
 
-            # Skip contours with odd depth (depth 1, 3, 5, ...)
-            depth = self._calculate_depth(idx, hierarchy)
-            if depth > 2 and depth % 2 == 1:
-                continue
-
-            temp_mask = np.zeros_like(gray, dtype=np.uint8)
-            cv2.drawContours(temp_mask, [c], -1, 255, thickness=cv2.FILLED)
-
-            mask_list.append(temp_mask)
-            accepted_indices.append(idx)
-
-            # temp_mask = np.zeros_like(gray, dtype=np.uint8)
-            # cv2.drawContours(temp_mask, [c], -1, 255, thickness=cv2.FILLED)
-
-            # overlap = cv2.bitwise_and(temp_mask, accepted_masks)
-            # overlap_ratio = np.sum(overlap > 0) / np.sum(temp_mask > 0)
-
-            # if overlap_ratio <= 1.0:
-            #     mask_list.append(temp_mask)
-            #     accepted_masks = cv2.bitwise_or(accepted_masks, temp_mask)
-            #     accepted_indices.append(idx)
-
-        return mask_list, accepted_indices
-
-    # ------------------------------------------------------------
-    # Colored Mode Processing
-    # ------------------------------------------------------------
-    def _process_colored_mode(self, img_rgb):
-        """Detect regions in colored images using k-means clustering."""
-        self._last_contours = []
-        self._last_hierarchy = None
-        self._last_indices = []
-        segmented, label_map = self._color_segmentation(img_rgb)
-        mask_list = []
-        for k in range(self._color_clusters):
-            mask = np.uint8(label_map == k) * 255
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)
-            mask_list.append(mask)
-        return mask_list, None
-
-    def _color_segmentation(self, img_rgb):
-        """Cluster colors using k-means for multi-color separation."""
-        Z = np.float32(img_rgb.reshape((-1, 3)))
-        criteria = (
-            cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER,
-            10,
-            1.0,
-        )
-        _, labels, centers = cv2.kmeans(
-            Z, self._color_clusters, None, criteria, 10, cv2.KMEANS_PP_CENTERS
-        )
-        centers = np.uint8(centers)
-        segmented = centers[labels.flatten()].reshape(img_rgb.shape)
-        return segmented, labels.reshape(img_rgb.shape[:2])
-
-    # ------------------------------------------------------------
-    # Contour Extraction Entry Point
-    # ------------------------------------------------------------
-    def extract(self, image_path):
-        """Extract contours and regions based on image type."""
-        result = self.preprocess(image_path)
-        if result is None:
-            return None
-        img_rgb, gray = result
-        outline_mode = self.is_outline_drawing(gray)
-
-        if outline_mode:
-            mode = "outline (black lines)"
-            mask_data = self._process_outline_mode(gray)
-        else:
-            mode = "colored (multi-region)"
-            mask_data = self._process_colored_mode(img_rgb)
-
-        if mask_data is None:
-            print(f"[Info] No valid regions found in '{image_path}'.")
-            return None
-
-        mask_list, contour_indices = mask_data
-
-        if not mask_list:
-            print(f"[Info] No valid regions found in '{image_path}'.")
-            return None
-
-        objects = self._extract_objects(img_rgb, gray, mask_list, contour_indices)
-        print(f"\n[ContourExtractor] Mode: {mode}")
-        print(f"Detected {len(objects)} color regions in '{image_path}'")
-
-        return img_rgb, gray, [obj["contour"] for obj in objects], objects
-
-    def _extract_objects(self, img_rgb, gray, mask_list, contour_indices=None):
-        """
-        Generate contour objects with their average colors and per-contour masks.
-        Each returned object has:
-            - "contour": the contour of this region
-            - "color":   mean RGB color in this region
-            - "depth":   hierarchical depth (if available)
-            - "source_index": index into the original contour list (if any)
-            - "mask":    binary mask (0 or 255) for this contour only
-        """
-        if contour_indices is None:
-            contour_indices = [None] * len(mask_list)
-
-        objects = []
-
-        for mask_idx, mask in enumerate(mask_list):
-            source_idx = (
-                contour_indices[mask_idx]
-                if mask_idx < len(contour_indices)
-                else None
-            )
-
-            # Find connected regions in this mask
             contours, _ = cv2.findContours(
                 mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
             )
+            if not contours:
+                continue
 
-            for c in contours:
-                if cv2.contourArea(c) < self._min_area:
-                    continue
+            # take the largest contour for this label
+            contour = max(contours, key=cv2.contourArea)
 
-                # Build a fresh per-contour region mask (0 or 255)
-                region_mask = np.zeros_like(gray, dtype=np.uint8)
-                cv2.drawContours(region_mask, [c], -1, 255, thickness=cv2.FILLED)
+            # mean color in this region
+            mean_color = cv2.mean(img_rgb, mask)
+            color = tuple(int(v) for v in mean_color[:3])
 
-                # Mean color inside this region
-                mean_color = cv2.mean(img_rgb, region_mask)
-                color = tuple(int(v) for v in mean_color[:3])
-
-                depth = self._contour_depth(source_idx)
-
-                objects.append(
-                    {
-                        "contour": c,
-                        "color": color,
-                        "depth": depth,
-                        "source_index": source_idx,
-                        "mask": region_mask,
-                    }
-                )
+            obj = {
+                "contour": contour,
+                "color": color,
+                "depth": 0,
+                "source_index": int(lb),
+                "mask": mask,
+            }
+            objects.append(obj)
 
         return objects
-
-    def _contour_depth(self, contour_idx):
-        """Compute hierarchical depth from the stored contour hierarchy."""
-        if (
-            contour_idx is None
-            or self._last_hierarchy is None
-            or len(self._last_hierarchy) == 0
-        ):
-            return 0
-
-        hierarchy = self._last_hierarchy[0]
-        depth = 0
-        parent = hierarchy[contour_idx][3]
-        while parent != -1:
-            depth += 1
-            parent = hierarchy[parent][3]
-        return depth
