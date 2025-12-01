@@ -148,7 +148,7 @@ class ContourExtractor:
 
             # Skip contours with odd depth (depth 1, 3, 5, ...)
             depth = self._calculate_depth(idx, hierarchy)
-            if depth % 2 == 1:
+            if depth > 2 and depth % 2 == 1:
                 continue
 
             temp_mask = np.zeros_like(gray, dtype=np.uint8)
