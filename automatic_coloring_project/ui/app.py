@@ -150,13 +150,19 @@ class Application:
         print("[App] Running graph matching...")
 
         try:
-            # Get parameters
             params = self._control_panel.get_parameters()
+            min_area = params["min_area"]
+            threshold = params["threshold"]
 
-            # Create extractor with current parameters
-            self._extractor_graph = ContourExtractorGraph(
-                min_area=params['min_area'],
-                color_clusters=params['n_clusters']
+            # Convert threshold into Canny thresholds
+            canny_low = max(5, threshold // 2)
+            canny_high = max(30, threshold)
+
+            # Create extractor (NEW API --- no color_clusters)
+            self._extractor = ContourExtractorGraph(
+                min_area=min_area,
+                canny_low=canny_low,
+                canny_high=canny_high
             )
 
             # Create matcher and edge detector
