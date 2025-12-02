@@ -15,6 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from shape_matcher import ShapeMatcher
 from contour_extractor import ContourExtractor
+from shape_matcher_graph import ShapeMatcherGraph
+from contour_extractor_graph import ContourExtractorGraph
 from edge_detector import EdgeDetector
 from visualizer import draw_bounding_boxes
 
@@ -57,6 +59,8 @@ class Application:
         # Processing components
         self._extractor = None
         self._matcher = None
+        self._extractor_graph = None
+        self._matcher_graph = None
         self._edge_detector = None
         
         # Setup UI
@@ -150,17 +154,17 @@ class Application:
             params = self._control_panel.get_parameters()
 
             # Create extractor with current parameters
-            self._extractor = ContourExtractor(
+            self._extractor_graph = ContourExtractorGraph(
                 min_area=params['min_area'],
                 color_clusters=params['n_clusters']
             )
 
             # Create matcher and edge detector
-            self._matcher = ShapeMatcher(self._extractor)
+            self._matcher_graph = ShapeMatcherGraph(self._extractor)
             self._edge_detector = EdgeDetector(threshold_value=params['threshold'])
 
             # Run colorization
-            ref_img, tgt_img, self._result_img = self._matcher.match_and_colorize(
+            ref_img, tgt_img, self._result_img = self._matcher_graph.match_and_colorize(
                 self._reference_path, self._target_path
             )
 
