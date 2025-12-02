@@ -104,7 +104,11 @@ class ControlPanel(ttk.Frame):
         self._run_btn = ttk.Button(btn_frame, text="Run Colorization", 
                                     command=self._on_run)
         self._run_btn.pack(side=tk.LEFT, padx=(0, 10))
-        
+
+        self._graph_btn = ttk.Button(btn_frame, text="Run Graph Matching",
+                                     command=self._on_run_graph_matching)
+        self._graph_btn.pack(side=tk.LEFT, padx=(0, 10))
+
         self._save_btn = ttk.Button(btn_frame, text="Save Result",
                                      command=self._on_save)
         self._save_btn.pack(side=tk.LEFT)
@@ -200,6 +204,10 @@ class ControlPanel(ttk.Frame):
         )
         if file_path and 'on_save' in self._callbacks:
             self._callbacks['on_save'](file_path)
+
+    def _on_run_graph_matching(self):
+        if 'on_run_graph_matching' in self._callbacks:
+            self._callbacks['on_run_graph_matching']()
 
     def _on_open_debug_viewer(self):
         """Handle Debug Viewer button click."""

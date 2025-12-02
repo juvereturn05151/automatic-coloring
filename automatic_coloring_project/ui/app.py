@@ -106,6 +106,7 @@ class Application:
             'on_load_target': self._on_load_target,
             'on_run': self._on_run,
             'on_save': self._on_save,
+            'on_run_graph_matching': self.run_graph_matching,
             'on_open_debug_viewer': self._on_open_debug_viewer
         }
         
@@ -136,7 +137,54 @@ class Application:
             self._control_panel.set_status("Target image loaded", "green")
         else:
             self._control_panel.set_status("Failed to load target image", "red")
-    
+
+    def run_graph_matching(self):
+        if self._reference_path is None or self._target_path is None:
+            print("[App] Load reference and target first.")
+            return
+
+        print("[App] Running graph matching...")
+
+        try:
+            # Get parameters
+            params = self._control_panel.get_parameters()
+
+            # Create extractor with current parameters
+            self._extractor = ContourExtractor(
+                min_area=params['min_area'],
+                color_clusters=params['n_clusters']
+            )
+
+            # Create matcher and edge detector
+            self._matcher = ShapeMatcher(self._extractor)
+            self._edge_detector = EdgeDetector(threshold_value=params['threshold'])
+
+            # Run colorization
+            ref_img, tgt_img, self._result_img = self._matcher.match_and_colorize(
+                self._reference_path, self._target_path
+            )
+
+            # Store images for debug views
+            self._ref_img = ref_img
+            self._tgt_img = tgt_img
+
+            # Generate debug images
+            self._generate_debug_images()
+
+            # Update displays
+            self._update_reference_display()
+            self._update_target_display()
+            self._result_canvas.update_image(self._result_img)
+
+            self._control_panel.set_status("Colorization complete!", "green")
+
+        except Exception as e:
+            self._control_panel.set_status(f"Error: {str(e)}", "red")
+            messagebox.showerror("Error", f"Processing failed:\n{str(e)}")
+
+        finally:
+            self._control_panel.set_running(False)
+
     def _on_run(self):
         """Handle Run button click - perform colorization."""
         if not self._reference_path or not self._target_path:
