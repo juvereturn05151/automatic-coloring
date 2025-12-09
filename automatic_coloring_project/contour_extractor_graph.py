@@ -46,19 +46,6 @@ class ContourExtractorGraph:
     # Public entry point
     # ------------------------------------------------------------
     def extract(self, image_path):
-        """
-        Extract regions from an image. Returns:
-            img_rgb, gray, contours_list, objects_list
-
-        objects_list is a list of dicts:
-            {
-                "contour": np.ndarray,
-                "color": (r, g, b),
-                "depth": 0,
-                "source_index": label_id,
-                "mask": 2D uint8 (0 or 255),
-            }
-        """
         img_bgr = cv2.imread(image_path, cv2.IMREAD_COLOR)
         if img_bgr is None:
             print(f"[ContourExtractor] WARNING: cannot read '{image_path}'")
@@ -161,25 +148,20 @@ class ContourExtractorGraph:
         for lb, area in small_labels:
             if area <= 0 or lb == bg_label:
                 continue
-
             if area > abs_thresh and area > rel_thresh * total_non_bg:
                 # big enough, keep as its own region
                 continue
-
             mask = (labels_out == lb).astype(np.uint8)
             if np.count_nonzero(mask) == 0:
                 continue
-
             # Dilate and find neighbor labels
             dil = cv2.dilate(mask, kernel, iterations=1)
             neighbors = labels_out[dil > 0]
             neighbors = neighbors[neighbors != lb]
             neighbors = neighbors[neighbors != bg_label]
-
             if neighbors.size == 0:
                 # nothing suitable to merge into; keep it
                 continue
-
             # Merge into most overlapped neighbor
             vals, counts_n = np.unique(neighbors, return_counts=True)
             new_label = int(vals[np.argmax(counts_n)])

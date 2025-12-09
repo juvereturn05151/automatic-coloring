@@ -10,7 +10,7 @@ from typing import List, Dict, Optional, Tuple
 
 import numpy as np
 import cv2
-
+import os
 
 @dataclass
 class RegionNode:
@@ -396,3 +396,54 @@ class GraphMatcher:
         # Flip stars along the path
         for r, c in path:
             star[r, c] = not star[r, c]
+
+
+
+    def visualize_rag(self, image_rgb, nodes, out_name="rag_graph.png"):
+        """
+                        Visualize Region Adjacency Graph (RAG):
+                          - each region → node drawn at centroid
+                          - edges between neighbors
+                          - node attributes displayed
+                        """
+        if image_rgb is None:
+            return
+
+        debug_dir = "debug"
+        os.makedirs(debug_dir, exist_ok=True)
+
+        H, W = image_rgb.shape[:2]
+
+        # Start with a white canvas
+        canvas = np.ones((H, W, 3), dtype=np.uint8) * 255
+
+        # Draw edges first
+        for node in nodes:
+            cx1 = int(node.centroid[0] * (W - 1))
+            cy1 = int(node.centroid[1] * (H - 1))
+
+            for nb in node.neighbors:
+                other = nodes[nb]
+                cx2 = int(other.centroid[0] * (W - 1))
+                cy2 = int(other.centroid[1] * (H - 1))
+
+                cv2.line(canvas, (cx1, cy1), (cx2, cy2), (0, 0, 0), 2)
+
+        # Draw nodes on top
+        for node in nodes:
+            cx = int(node.centroid[0] * (W - 1))
+            cy = int(node.centroid[1] * (H - 1))
+
+            # Draw circle
+            cv2.circle(canvas, (cx, cy), 18, (50, 150, 255), -1)
+
+            # Label the node
+            text = f"{node.idx} (deg={node.degree})"
+            cv2.putText(
+                canvas, text, (cx + 22, cy + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1
+            )
+
+        out_path = os.path.join(debug_dir, out_name)
+        cv2.imwrite(out_path, canvas)
+        print(f"[Debug] RAG graph saved → {out_path}")

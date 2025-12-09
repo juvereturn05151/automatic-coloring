@@ -348,4 +348,12 @@ class ShapeMatcherGraph:
         # apply black color on outlines
         colorized_match[outline_mask == 1] = (0, 0, 0)
 
+        # Build graphs for visualization
+        ref_nodes = gm._build_graph(ref_objs, w, h, "Reference")
+        tgt_nodes = gm._build_graph(tgt_objs, w, h, "Target")
+
+        # Visualize RAG for BOTH
+        gm.visualize_rag(ref_img, ref_nodes, "reference_rag.png")
+        gm.visualize_rag(tgt_img, tgt_nodes, "target_rag.png")
+
         return ref_img, tgt_img, colorized_match

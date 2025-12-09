@@ -75,11 +75,6 @@ class ContourExtractor:
             15,
             5,
         )
-
-        # binary = cv2.dilate(binary, np.ones((3, 3), np.uint8), iterations=1)
-        # binary = cv2.morphologyEx(
-        #     binary, cv2.MORPH_OPEN, np.ones((2, 2), np.uint8), iterations=1
-        # )
         return binary
 
     def _find_all_contours(self, binary):
@@ -137,7 +132,6 @@ class ContourExtractor:
 
     def _create_non_overlapping_masks(self, gray, contours, hierarchy):
         """Create filled masks while avoiding overlapping regions and excluding odd-depth contours."""
-        accepted_masks = np.zeros_like(gray, dtype=np.uint8)
         mask_list = []
         accepted_indices = []
 
@@ -156,17 +150,6 @@ class ContourExtractor:
 
             mask_list.append(temp_mask)
             accepted_indices.append(idx)
-
-            # temp_mask = np.zeros_like(gray, dtype=np.uint8)
-            # cv2.drawContours(temp_mask, [c], -1, 255, thickness=cv2.FILLED)
-
-            # overlap = cv2.bitwise_and(temp_mask, accepted_masks)
-            # overlap_ratio = np.sum(overlap > 0) / np.sum(temp_mask > 0)
-
-            # if overlap_ratio <= 1.0:
-            #     mask_list.append(temp_mask)
-            #     accepted_masks = cv2.bitwise_or(accepted_masks, temp_mask)
-            #     accepted_indices.append(idx)
 
         return mask_list, accepted_indices
 
